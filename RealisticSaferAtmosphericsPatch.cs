@@ -4,9 +4,10 @@ using Assets.Scripts.Objects.Pipes;
 using Assets.Scripts.Atmospherics;
 using System.Collections.Generic;
 using System.Reflection.Emit;
-using Objects.Pipes;
 using System.Reflection;
 using System;
+using Assets.Scripts.Util;
+using Objects.Pipes;
 
 namespace RealisticSaferAtmospherics
 {
@@ -55,6 +56,20 @@ namespace RealisticSaferAtmospherics
       double quadraticFalloff = Math.Pow(linearFalloff, 1);
       return Math.Max(quadraticFalloff, 0.0);
     }
+
+    // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
+    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference = 5000.0)
+    {
+      double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
+      // Added modifier to num based on pressure difference
+      num *= getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference);
+      if (num <= 0.0)
+      {
+        return;
+      }
+      GasMixture gasMixture = inputAtmos.Remove(inputAtmos.GasMixture.GetTotalMoles(matterStateToMove) * num, matterStateToMove);
+      outputAtmos.Add(gasMixture);
+    }
   }
 
   [HarmonyPatch(typeof(ActiveVent))]
@@ -70,24 +85,24 @@ namespace RealisticSaferAtmospherics
   }
 
 
-  [HarmonyPatch(typeof(AtmosphereHelper))]
+  [HarmonyPatch(typeof(VolumePump))]
   public static class VolumePumpPatch
   {
-    [HarmonyPatch("MoveVolume")]
+    [HarmonyPatch("MoveAtmosphere")]
     [HarmonyTranspiler]
     [UsedImplicitly]
     static IEnumerable<CodeInstruction> VolumePumpTranspiler(IEnumerable<CodeInstruction> instructions)
     {
-      const double maxDifferential = 10000.0; // 10 MPa for volume pumps
+      const float turboMinOperatingSoundPitch = 0.75f; // Using sound pitch to differentiate pump types
+      const double normalVolumePumpMaxDiff = 10000.0; // 10 MPa cap for volume pumps
 
-      RealisticSaferAtmosphericsPlugin.Instance.Log("Trying to patch AtmosphereHelper.MoveVolume...");
+      const double turboVolumePumpMaxDiff = 40000.0; // 40 MPa cap for turbo volume pumps
 
-      var toDouble = AccessTools.Field(typeof(PressurekPa), "_value");
-      var getPressure = AccessTools.Property(typeof(Atmosphere), nameof(Atmosphere.PressureGassesAndLiquids)).GetGetMethod();
-      var getFlowRateModifier = AccessTools.Method(typeof(PumpModifier), nameof(PumpModifier.getFlowRateModifier));
-      if (toDouble == null || getPressure == null || getFlowRateModifier == null)
+      var moveVolumeCapped = AccessTools.Method(typeof(PumpModifier), nameof(PumpModifier.MoveVolumeCapped));
+      var turboMinSoundPitch = AccessTools.Property(typeof(TurboVolumePump), nameof(TurboVolumePump.MinOperatingSoundPitch))?.GetGetMethod();
+      if (moveVolumeCapped == null || turboMinSoundPitch == null)
       {
-        RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. ToDouble found: {toDouble != null}, getPressure found: {getPressure != null}, getFlowRateModifier found: {getFlowRateModifier != null}");
+        RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MinOperatingSoundPitch found: {turboMinSoundPitch != null}");
         foreach (var instruction in instructions)
         {
           yield return instruction; // just pass through original code if we can't find the methods
@@ -99,25 +114,23 @@ namespace RealisticSaferAtmospherics
       foreach (CodeInstruction instruction in instructions)
       {
         // On first time we're calling a method called ToDouble
-        if (injected == false && instruction.opcode == OpCodes.Call && instruction.operand is MethodInfo methodInfo && methodInfo.Name == "ToDouble")
+        if (injected == false && instruction.opcode == OpCodes.Call && instruction.operand is MethodInfo methodInfo && methodInfo.Name == "MoveVolume")
         {
-          // keep original ToDouble result on stack for later multiplication
-          yield return instruction;
+          // Check MinOperatingSoundPitch to determine if this is a turbo volume pump or not
+          yield return new CodeInstruction(OpCodes.Ldarg_0);
+          yield return new CodeInstruction(OpCodes.Callvirt, AccessTools.Property(typeof(VolumePump), "MinOperatingSoundPitch")?.GetGetMethod());
+          yield return new CodeInstruction(OpCodes.Ldc_R4, turboMinOperatingSoundPitch);
+          yield return new CodeInstruction(OpCodes.Ceq); //Trick to avoid branching, result is 1 if turbo pump, 0 if normal pump
+          yield return new CodeInstruction(OpCodes.Conv_R8);
+          yield return new CodeInstruction(OpCodes.Ldc_R8, normalVolumePumpMaxDiff);
+          yield return new CodeInstruction(OpCodes.Ldc_R8, turboVolumePumpMaxDiff);
+          yield return new CodeInstruction(OpCodes.Sub); // Subtract to get difference between normal and turbo max diff
+          yield return new CodeInstruction(OpCodes.Mul); // Multiply by 0 or 1 to select between normal and turbo max diff
+          yield return new CodeInstruction(OpCodes.Ldc_R8, normalVolumePumpMaxDiff);
+          yield return new CodeInstruction(OpCodes.Add); // Add back normal max diff to get final max diff value, should be either turbo or normal
 
-          // push input pressure as double
-          yield return new CodeInstruction(OpCodes.Ldarg_0); // Load first arg (reference to Input Atmos)
-          yield return new CodeInstruction(OpCodes.Call, getPressure); // Call GetPressure on the Input Atmos
-          yield return new CodeInstruction(OpCodes.Ldfld, toDouble); // Convert to double
-          // push output pressure as double
-          yield return new CodeInstruction(OpCodes.Ldarg_1); // Load second arg (reference to Output Atmos)
-          yield return new CodeInstruction(OpCodes.Call, getPressure); // Call GetPressure on the Output Atmos
-          yield return new CodeInstruction(OpCodes.Ldfld, toDouble); // Convert to double
-          // push max differential constant
-          yield return new CodeInstruction(OpCodes.Ldc_R8, maxDifferential); // Load max differential constant
-          // Call our method, pops 3 doubles, pushes 1 double
-          yield return new CodeInstruction(OpCodes.Call, getFlowRateModifier);
-          // multiply the result of ToDouble by the result of our method, next op should save to variable which gets reused by the rest of the function call
-          yield return new CodeInstruction(OpCodes.Mul);
+          // Call our method, same as normal move volume but with extra parameter
+          yield return new CodeInstruction(OpCodes.Call, moveVolumeCapped);
           injected = true; // only do this once
         }
         else
