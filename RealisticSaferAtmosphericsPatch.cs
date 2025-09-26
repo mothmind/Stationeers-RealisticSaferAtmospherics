@@ -1,11 +1,10 @@
 ﻿using HarmonyLib;
-using JetBrains.Annotations;
+using System;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Collections.Generic;
 using Assets.Scripts.Objects.Pipes;
 using Assets.Scripts.Atmospherics;
-using System.Collections.Generic;
-using System.Reflection.Emit;
-using System.Reflection;
-using System;
 using Assets.Scripts.Util;
 using Objects.Pipes;
 
@@ -74,7 +73,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("OnAtmosphericTick")]
     [HarmonyPrefix]
-    [UsedImplicitly]
     static private void PressureRegulatorAlwaysPowered(PressureRegulator __instance)
     {
       __instance.PoweredValue = 1; // Always powered
@@ -92,7 +90,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MaxMolesPerTick")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> RegulatorBuffTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       foreach (var instruction in instructions)
@@ -111,7 +108,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("PumpGasToPipe")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> ActiveVentTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return instructions;
@@ -123,7 +119,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("HandleGasInput")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> AdvancedFurnaceTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
@@ -134,7 +129,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MoveVolume")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> DeviceAtmosphericsTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions);
@@ -146,7 +140,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("HandleGasInput")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> IndustrialBurnerTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions);
@@ -158,7 +151,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MovePropellant")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> LiquidRocketEngineTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
@@ -171,7 +163,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MoveAtmosphere")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> VolumePumpTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       const float turboMinOperatingSoundPitch = 0.75f; // Using sound pitch to differentiate pump types
@@ -233,7 +224,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MovePropellant")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> PressureFedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
@@ -245,7 +235,6 @@ namespace RealisticSaferAtmospherics
   {
     [HarmonyPatch("MovePropellant")]
     [HarmonyTranspiler]
-    [UsedImplicitly]
     static IEnumerable<CodeInstruction> PumpedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
