@@ -11,6 +11,64 @@ using Objects.Pipes;
 
 namespace RealisticSaferAtmospherics
 {
+  public static class PumpHelper
+  {
+    public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDifferential)
+    {
+      double linearFalloff = 1 - (outputPressure - inputPressure) / maxDifferential;
+      double quadraticFalloff = Math.Pow(linearFalloff, 1);
+      return Math.Max(quadraticFalloff, 0.0);
+    }
+
+    // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
+    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference)
+    {
+      double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
+      // Added modifier to num based on pressure difference
+      num *= getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference);
+      if (num <= 0.0)
+      {
+        return;
+      }
+      GasMixture gasMixture = inputAtmos.Remove(inputAtmos.GasMixture.GetTotalMoles(matterStateToMove) * num, matterStateToMove);
+      outputAtmos.Add(gasMixture);
+    }
+
+    public static void MoveLiquidVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, double maxPressureDifference)
+    {
+      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference));
+      outputAtmos.Add(AtmosphereHelper.RemoveLiquidVolume(inputAtmos, volume));
+    }
+
+    public static IEnumerable<CodeInstruction> TranspileMoveVolumeCapped(IEnumerable<CodeInstruction> instructions, double maxPressureDifference = 5000.0)
+    {
+      var moveVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveVolumeCapped));
+      var moveLiquidVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveLiquidVolumeCapped));
+      if (moveVolumeCapped == null || moveLiquidVolumeCapped == null)
+      {
+        RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MoveLiquidVolumeCapped found: {moveLiquidVolumeCapped != null}");
+      }
+      foreach (var instruction in instructions)
+      {
+        if (instruction.opcode == OpCodes.Call)
+        {
+          if (instruction.operand is MethodInfo methodInfo && methodInfo.Name == "MoveVolume")
+          {
+            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDifference); // Push max pressure difference onto stack
+            instruction.operand = moveVolumeCapped; // Replace call to MoveVolume with call to MoveVolumeCapped
+          }
+          if (instruction.operand is MethodInfo methodInfo2 && methodInfo2.Name == "MoveLiquidVolume")
+          {
+            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDifference); // Push max pressure difference onto stack
+            instruction.operand = moveLiquidVolumeCapped; // Replace call to MoveLiquidVolume with call to MoveLiquidVolumeCapped
+          }
+        }
+        yield return instruction; // otherwise, just pass the instruction through unchanged
+      }
+    }
+  }
+
+
   [HarmonyPatch(typeof(PressureRegulator))]
   public static class PressureRegulatorPatch
   {
@@ -48,30 +106,6 @@ namespace RealisticSaferAtmospherics
     }
   }
 
-  public static class PumpModifier
-  {
-    public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDifferential)
-    {
-      double linearFalloff = 1 - (outputPressure - inputPressure) / maxDifferential;
-      double quadraticFalloff = Math.Pow(linearFalloff, 1);
-      return Math.Max(quadraticFalloff, 0.0);
-    }
-
-    // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
-    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference = 5000.0)
-    {
-      double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
-      // Added modifier to num based on pressure difference
-      num *= getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference);
-      if (num <= 0.0)
-      {
-        return;
-      }
-      GasMixture gasMixture = inputAtmos.Remove(inputAtmos.GasMixture.GetTotalMoles(matterStateToMove) * num, matterStateToMove);
-      outputAtmos.Add(gasMixture);
-    }
-  }
-
   [HarmonyPatch(typeof(ActiveVent))]
   public static class ActiveVentPatch
   {
@@ -84,9 +118,56 @@ namespace RealisticSaferAtmospherics
     }
   }
 
+  [HarmonyPatch(typeof(AdvancedFurnace))]
+  public static class AdvancedFurnacePatch
+  {
+    [HarmonyPatch("HandleGasInput")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> AdvancedFurnaceTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+    }
+  }
+  [HarmonyPatch(typeof(DeviceAtmospherics))]
+  public static class DeviceAtmosphericsPatch
+  {
+    [HarmonyPatch("MoveVolume")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> DeviceAtmosphericsTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions);
+    }
+  }
+
+  [HarmonyPatch(typeof(IndustrialBurner))]
+  public static class IndustrialBurnerPatch
+  {
+    [HarmonyPatch("HandleGasInput")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> IndustrialBurnerTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions);
+    }
+  }
+
+  [HarmonyPatch(typeof(LiquidRocketEngine))]
+  public static class LiquidRocketEnginePatch
+  {
+    [HarmonyPatch("MovePropellant")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> LiquidRocketEngineTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+    }
+  }
 
   [HarmonyPatch(typeof(VolumePump))]
   public static class VolumePumpPatch
+
   {
     [HarmonyPatch("MoveAtmosphere")]
     [HarmonyTranspiler]
@@ -95,10 +176,10 @@ namespace RealisticSaferAtmospherics
     {
       const float turboMinOperatingSoundPitch = 0.75f; // Using sound pitch to differentiate pump types
       const double normalVolumePumpMaxDiff = 10000.0; // 10 MPa cap for volume pumps
-
       const double turboVolumePumpMaxDiff = 40000.0; // 40 MPa cap for turbo volume pumps
+      const double turboNormalDiff = turboVolumePumpMaxDiff - normalVolumePumpMaxDiff;
 
-      var moveVolumeCapped = AccessTools.Method(typeof(PumpModifier), nameof(PumpModifier.MoveVolumeCapped));
+      var moveVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.MoveVolumeCapped));
       var turboMinSoundPitch = AccessTools.Property(typeof(TurboVolumePump), nameof(TurboVolumePump.MinOperatingSoundPitch))?.GetGetMethod();
       if (moveVolumeCapped == null || turboMinSoundPitch == null)
       {
@@ -122,9 +203,7 @@ namespace RealisticSaferAtmospherics
           yield return new CodeInstruction(OpCodes.Ldc_R4, turboMinOperatingSoundPitch);
           yield return new CodeInstruction(OpCodes.Ceq); //Trick to avoid branching, result is 1 if turbo pump, 0 if normal pump
           yield return new CodeInstruction(OpCodes.Conv_R8);
-          yield return new CodeInstruction(OpCodes.Ldc_R8, normalVolumePumpMaxDiff);
-          yield return new CodeInstruction(OpCodes.Ldc_R8, turboVolumePumpMaxDiff);
-          yield return new CodeInstruction(OpCodes.Sub); // Subtract to get difference between normal and turbo max diff
+          yield return new CodeInstruction(OpCodes.Ldc_R8, turboNormalDiff);
           yield return new CodeInstruction(OpCodes.Mul); // Multiply by 0 or 1 to select between normal and turbo max diff
           yield return new CodeInstruction(OpCodes.Ldc_R8, normalVolumePumpMaxDiff);
           yield return new CodeInstruction(OpCodes.Add); // Add back normal max diff to get final max diff value, should be either turbo or normal
@@ -148,4 +227,29 @@ namespace RealisticSaferAtmospherics
       }
     }
   }
+
+  [HarmonyPatch(typeof(PressureFedLiquidEngine))]
+  public static class PressureFedLiquidEnginePatch
+  {
+    [HarmonyPatch("MovePropellant")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> PressureFedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+    }
+  }
+
+  [HarmonyPatch(typeof(PumpedLiquidEngine))]
+  public static class PumpedLiquidEnginePatch
+  {
+    [HarmonyPatch("MovePropellant")]
+    [HarmonyTranspiler]
+    [UsedImplicitly]
+    static IEnumerable<CodeInstruction> PumpedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+    }
+  }
 }
+
