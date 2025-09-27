@@ -24,6 +24,13 @@ namespace RealisticSaferAtmospherics
       return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
     }
 
+    public static double getMixerFlowRateModifier(Atmosphere inputAtmos, Atmosphere inputAtmos2, Atmosphere outputAtmos, double maxDifferential)
+    {
+      double inputPressure = 0.5 * (inputAtmos.PressureGassesAndLiquids.ToDouble() + inputAtmos2.PressureGassesAndLiquids.ToDouble());
+      return PumpHelper.getFlowRateModifier(inputPressure, outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
+    }
+
+
     // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
     public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference)
     {
@@ -217,10 +224,6 @@ namespace RealisticSaferAtmospherics
       {
         RealisticSaferAtmosphericsPlugin.Instance.LogError("VolumePumpTranspiler: Injection failed, pattern not found.");
       }
-      else
-      {
-        RealisticSaferAtmosphericsPlugin.Instance.Log("VolumePumpTranspiler: Injection succeeded.");
-      }
     }
   }
 
@@ -243,6 +246,37 @@ namespace RealisticSaferAtmospherics
     static IEnumerable<CodeInstruction> PumpedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+    }
+  }
+
+  [HarmonyPatch(typeof(Mixer))]
+  public static class MixerPatch
+  {
+    [HarmonyPatch("OnAtmosphericTick")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> MixerTranspiler(IEnumerable<CodeInstruction> instructions, ILGenerator il)
+    {
+      const double maxPressureDiff = 5000.0; // 5 MPa cap for mixers
+      return new CodeMatcher(instructions, il)
+        .MatchStartForward(
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(IdealGas), nameof(IdealGas.Quantity), new Type[] { typeof(PressurekPa), typeof(VolumeLitres), typeof(TemperatureKelvin) }))
+        )
+        .Repeat(matcher =>
+          matcher
+            .Advance(1)
+            .InsertAndAdvance(
+              new CodeInstruction(OpCodes.Ldarg_0),
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "InputNetwork")),
+              new CodeInstruction(OpCodes.Ldarg_0),
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "InputNetwork2")),
+              new CodeInstruction(OpCodes.Ldarg_0),
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "OutputNetwork")),
+              new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff), // Max pressure difference for mixer
+              new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.getMixerFlowRateModifier))),
+              new CodeInstruction(OpCodes.Mul)
+          )
+        )
+        .InstructionEnumeration();
     }
   }
 }
