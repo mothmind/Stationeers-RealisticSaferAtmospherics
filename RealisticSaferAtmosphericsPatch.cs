@@ -13,6 +13,22 @@ using Assets.Scripts.Objects;
 
 namespace RealisticSaferAtmospherics
 {
+  public static class Logger
+  {
+    public static void Log(string message)
+    {
+      RealisticSaferAtmosphericsPlugin.Instance.Log(message);
+    }
+    public static void LogWarning(string message)
+    {
+      RealisticSaferAtmosphericsPlugin.Instance.LogWarning(message);
+    }
+    public static void LogError(string message)
+    {
+      RealisticSaferAtmosphericsPlugin.Instance.LogError(message);
+    }
+  }
+
   public static class FlowMath
   {
     public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDiff)
