@@ -12,10 +12,10 @@ namespace RealisticSaferAtmospherics
 {
   public static class PumpHelper
   {
-    public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDifferential)
+    public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDiff)
     {
-      double linearFalloff = 1 - (outputPressure - inputPressure) / maxDifferential;
-      double quadraticFalloff = Math.Pow(linearFalloff, 1);
+      double linearFalloff = 1 - (outputPressure - inputPressure) / maxDiff;
+      double quadraticFalloff = Math.Sqrt(linearFalloff);
       return Math.Max(quadraticFalloff, 0.0);
     }
 
