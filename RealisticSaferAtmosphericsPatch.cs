@@ -27,7 +27,7 @@ namespace RealisticSaferAtmospherics
     public static double getMixerFlowRateModifier(Atmosphere inputAtmos, Atmosphere inputAtmos2, Atmosphere outputAtmos, double maxDifferential)
     {
       double inputPressure = 0.5 * (inputAtmos.PressureGassesAndLiquids.ToDouble() + inputAtmos2.PressureGassesAndLiquids.ToDouble());
-      return PumpHelper.getFlowRateModifier(inputPressure, outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
+      return getFlowRateModifier(inputPressure, outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
     }
 
 
@@ -265,6 +265,7 @@ namespace RealisticSaferAtmospherics
           matcher
             .Advance(1)
             .InsertAndAdvance(
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
               new CodeInstruction(OpCodes.Ldarg_0),
               new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "InputNetwork")),
               new CodeInstruction(OpCodes.Ldarg_0),
@@ -273,7 +274,8 @@ namespace RealisticSaferAtmospherics
               new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "OutputNetwork")),
               new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff), // Max pressure difference for mixer
               new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.getMixerFlowRateModifier))),
-              new CodeInstruction(OpCodes.Mul)
+              new CodeInstruction(OpCodes.Mul),
+              new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
           )
         )
         .InstructionEnumeration();
