@@ -7,6 +7,7 @@ using Assets.Scripts.Objects.Pipes;
 using Assets.Scripts.Atmospherics;
 using Assets.Scripts.Util;
 using Objects.Pipes;
+using Assets.Scripts.Networks;
 
 namespace RealisticSaferAtmospherics
 {
@@ -19,24 +20,38 @@ namespace RealisticSaferAtmospherics
       return Math.Max(quadraticFalloff, 0.0);
     }
 
-    public static double getFlowRateModifier(Atmosphere inputAtmos, Atmosphere outputAtmos, double maxDifferential)
+    public static double getFlowRateModifier(Atmosphere inputAtmos, Atmosphere outputAtmos, double maxDiff)
     {
-      return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
+      if (inputAtmos == null || outputAtmos == null)
+      {
+        return 0.0;
+      }
+      return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDiff);
     }
 
-    public static double getMixerFlowRateModifier(Atmosphere inputAtmos, Atmosphere inputAtmos2, Atmosphere outputAtmos, double maxDifferential)
+    public static double getMixerFlowRateModifier(PipeNetwork inputPipes, PipeNetwork inputPipes2, PipeNetwork outputPipes, float ratio1, double maxDiff)
     {
-      double inputPressure = 0.5 * (inputAtmos.PressureGassesAndLiquids.ToDouble() + inputAtmos2.PressureGassesAndLiquids.ToDouble());
-      return getFlowRateModifier(inputPressure, outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
+      if (inputPipes == null || inputPipes2 == null || outputPipes == null)
+      {
+        return 0.0;
+      }
+      float ratio2 = 100.0f - ratio1;
+      double in1Pressure = inputPipes.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
+      double in2Pressure = inputPipes2.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
+      double outPressure = outputPipes.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
+      // Use average of input pressures to determine flow rate modifier
+      double effectivePressure = 100.0 * Math.Min(in1Pressure / Math.Max(ratio1, 0.01f), in2Pressure / Math.Max(ratio2, 0.01f));
+      double multiplier = getFlowRateModifier(effectivePressure, outPressure, maxDiff);
+      RealisticSaferAtmosphericsPlugin.Instance.Log($"Mixer flow rate calc: In1 {in1Pressure}kPa @ {ratio1}%, In2 {in2Pressure}kPa @ {ratio2}%, Effective {effectivePressure}kPa, Out {outPressure}kPa, Multiplier {multiplier}");
+      return multiplier;
     }
 
-
-    // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
-    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference)
+    // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure diff
+    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDiff)
     {
       double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
-      // Added modifier to num based on pressure difference
-      num *= getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDifference);
+      // Added modifier to num based on pressure diff
+      num *= getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff);
       if (num <= 0.0)
       {
         return;
@@ -45,13 +60,13 @@ namespace RealisticSaferAtmospherics
       outputAtmos.Add(gasMixture);
     }
 
-    public static void MoveLiquidVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, double maxPressureDifference)
+    public static void MoveLiquidVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, double maxPressureDiff)
     {
-      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDifference));
+      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff));
       outputAtmos.Add(AtmosphereHelper.RemoveLiquidVolume(inputAtmos, volume));
     }
 
-    public static IEnumerable<CodeInstruction> TranspileMoveVolumeCapped(IEnumerable<CodeInstruction> instructions, double maxPressureDifference = 5000.0)
+    public static IEnumerable<CodeInstruction> TranspileMoveVolumeCapped(IEnumerable<CodeInstruction> instructions, double maxPressureDiff = 5000.0)
     {
       var moveVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveVolumeCapped));
       var moveLiquidVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveLiquidVolumeCapped));
@@ -65,12 +80,12 @@ namespace RealisticSaferAtmospherics
         {
           if (instruction.operand is MethodInfo methodInfo && methodInfo.Name == "MoveVolume")
           {
-            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDifference); // Push max pressure difference onto stack
+            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff); // Push max pressure diff onto stack
             instruction.operand = moveVolumeCapped; // Replace call to MoveVolume with call to MoveVolumeCapped
           }
           if (instruction.operand is MethodInfo methodInfo2 && methodInfo2.Name == "MoveLiquidVolume")
           {
-            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDifference); // Push max pressure difference onto stack
+            yield return new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff); // Push max pressure diff onto stack
             instruction.operand = moveLiquidVolumeCapped; // Replace call to MoveLiquidVolume with call to MoveLiquidVolumeCapped
           }
         }
@@ -258,25 +273,33 @@ namespace RealisticSaferAtmospherics
     {
       const double maxPressureDiff = 5000.0; // 5 MPa cap for mixers
       return new CodeMatcher(instructions, il)
-        .MatchStartForward(
-          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(IdealGas), nameof(IdealGas.Quantity), new Type[] { typeof(PressurekPa), typeof(VolumeLitres), typeof(TemperatureKelvin) }))
+        .MatchForward(false,
+          new CodeMatch(OpCodes.Ldsfld, AccessTools.Field(typeof(MoleQuantity), "Zero")),
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(MoleQuantity), "op_GreaterThan", new Type[] { typeof(MoleQuantity), typeof(MoleQuantity) })),
+          new CodeMatch((i) => i.opcode == OpCodes.Brfalse),
+          new CodeMatch((i) => i.opcode == OpCodes.Ldloca_S)
         )
+        .ThrowIfNotMatch("MixerTranspiler: Pattern not found")
         .Repeat(matcher =>
+        {
           matcher
-            .Advance(1)
+            .Advance(8)
             .InsertAndAdvance(
               new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
               new CodeInstruction(OpCodes.Ldarg_0),
-              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "InputNetwork")),
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "InputNetwork")),
               new CodeInstruction(OpCodes.Ldarg_0),
-              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "InputNetwork2")),
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "InputNetwork2")),
               new CodeInstruction(OpCodes.Ldarg_0),
-              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(Mixer), "OutputNetwork")),
-              new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff), // Max pressure difference for mixer
+              new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "OutputNetwork")),
+              new CodeInstruction(OpCodes.Ldarg_0),
+              new CodeInstruction(OpCodes.Call, AccessTools.PropertyGetter(typeof(Mixer), "Ratio1")),
+              new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff),
               new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.getMixerFlowRateModifier))),
               new CodeInstruction(OpCodes.Mul),
               new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
-          )
+          );
+        }
         )
         .InstructionEnumeration();
     }
