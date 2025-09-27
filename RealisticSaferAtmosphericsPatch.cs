@@ -8,16 +8,18 @@ using Assets.Scripts.Atmospherics;
 using Assets.Scripts.Util;
 using Objects.Pipes;
 using Assets.Scripts.Networks;
+using Assets.Scripts.Objects.Electrical;
+using Assets.Scripts.Objects;
 
 namespace RealisticSaferAtmospherics
 {
-  public static class PumpHelper
+  public static class FlowMath
   {
     public static double getFlowRateModifier(double inputPressure, double outputPressure, double maxDiff)
     {
       double linearFalloff = 1 - (outputPressure - inputPressure) / maxDiff;
-      double quadraticFalloff = Math.Sqrt(linearFalloff);
-      return Math.Max(quadraticFalloff, 0.0);
+      double quadraticFalloff = Math.Sqrt(Math.Max(linearFalloff, 0.0));
+      return quadraticFalloff;
     }
 
     public static double getFlowRateModifier(Atmosphere inputAtmos, Atmosphere outputAtmos, double maxDiff)
@@ -29,6 +31,24 @@ namespace RealisticSaferAtmospherics
       return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDiff);
     }
 
+    public static double getFlowRateModifier(Atmosphere inputAtmos, PipeNetwork outputAtmos, double maxDiff)
+    {
+      if (inputAtmos == null || outputAtmos == null)
+      {
+        return 0.0;
+      }
+      return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.Atmosphere.PressureGassesAndLiquids.ToDouble(), maxDiff);
+    }
+
+    public static double getFlowRateModifier(PipeNetwork inputPipes, PipeNetwork outputPipes, double maxDiff)
+    {
+      if (inputPipes == null || outputPipes == null)
+      {
+        return 0.0;
+      }
+      return getFlowRateModifier(inputPipes.Atmosphere.PressureGassesAndLiquids.ToDouble(), outputPipes.Atmosphere.PressureGassesAndLiquids.ToDouble(), maxDiff);
+    }
+
     public static double getMixerFlowRateModifier(PipeNetwork inputPipes, PipeNetwork inputPipes2, PipeNetwork outputPipes, float ratio1, double maxDiff)
     {
       if (inputPipes == null || inputPipes2 == null || outputPipes == null)
@@ -36,14 +56,30 @@ namespace RealisticSaferAtmospherics
         return 0.0;
       }
       float ratio2 = 100.0f - ratio1;
-      double in1Pressure = inputPipes.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
-      double in2Pressure = inputPipes2.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
-      double outPressure = outputPipes.Atmosphere?.PressureGassesAndLiquids.ToDouble() ?? 0.0;
+      double in1Pressure = inputPipes.Atmosphere.PressureGassesAndLiquids.ToDouble();
+      double in2Pressure = inputPipes2.Atmosphere.PressureGassesAndLiquids.ToDouble();
+      double outPressure = outputPipes.Atmosphere.PressureGassesAndLiquids.ToDouble();
       // Use average of input pressures to determine flow rate modifier
       double effectivePressure = 100.0 * Math.Min(in1Pressure / Math.Max(ratio1, 0.01f), in2Pressure / Math.Max(ratio2, 0.01f));
       double multiplier = getFlowRateModifier(effectivePressure, outPressure, maxDiff);
-      RealisticSaferAtmosphericsPlugin.Instance.Log($"Mixer flow rate calc: In1 {in1Pressure}kPa @ {ratio1}%, In2 {in2Pressure}kPa @ {ratio2}%, Effective {effectivePressure}kPa, Out {outPressure}kPa, Multiplier {multiplier}");
       return multiplier;
+    }
+  }
+
+
+  public static class TranspilerHelpers
+  {
+    public static GasMixture TakeNormalisedGasPressureScaledCapped(Atmosphere inputAtmosphere, PressurekPa basePressurePerTick, PressurekPa inputPressureDelta, out MoleQuantity transferMoles, float denominator = 3f, double maxPressureDiff = 5000.0)
+    {
+      double inputPressure = inputAtmosphere.PressureGassesAndLiquids.ToDouble();
+      double outputPressure = inputPressure - inputPressureDelta.ToDouble();
+      double modifier = FlowMath.getFlowRateModifier(inputPressure, outputPressure, maxPressureDiff);
+      PressurekPa outMax = Chemistry.Limits.MAXPressureGasPipe / (double)denominator;
+      inputPressureDelta = RocketMath.Max(inputPressureDelta, PressurekPa.Zero);
+      PressurekPa pressure = RocketMath.MapToScale(PressurekPa.Zero, Chemistry.Limits.MAXPressureGasPipe, basePressurePerTick, outMax, inputPressureDelta);
+      transferMoles = IdealGas.Quantity(pressure, Chemistry.PipeVolume, inputAtmosphere.Temperature);
+      transferMoles *= modifier;
+      return inputAtmosphere.Remove(transferMoles, AtmosphereHelper.MatterState.All);
     }
 
     // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure diff
@@ -51,7 +87,7 @@ namespace RealisticSaferAtmospherics
     {
       double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
       // Added modifier to num based on pressure diff
-      num *= getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff);
+      num *= FlowMath.getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff);
       if (num <= 0.0)
       {
         return;
@@ -62,14 +98,14 @@ namespace RealisticSaferAtmospherics
 
     public static void MoveLiquidVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, double maxPressureDiff)
     {
-      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff));
+      volume *= new VolumeLitres(FlowMath.getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDiff));
       outputAtmos.Add(AtmosphereHelper.RemoveLiquidVolume(inputAtmos, volume));
     }
 
     public static IEnumerable<CodeInstruction> TranspileMoveVolumeCapped(IEnumerable<CodeInstruction> instructions, double maxPressureDiff = 5000.0)
     {
-      var moveVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveVolumeCapped));
-      var moveLiquidVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(MoveLiquidVolumeCapped));
+      var moveVolumeCapped = AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.MoveVolumeCapped));
+      var moveLiquidVolumeCapped = AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.MoveLiquidVolumeCapped));
       if (moveVolumeCapped == null || moveLiquidVolumeCapped == null)
       {
         RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MoveLiquidVolumeCapped found: {moveLiquidVolumeCapped != null}");
@@ -92,8 +128,21 @@ namespace RealisticSaferAtmospherics
         yield return instruction; // otherwise, just pass the instruction through unchanged
       }
     }
-  }
 
+    public static IEnumerable<CodeInstruction> TranspileTakeNormalisedGasPressureScaledCapped(IEnumerable<CodeInstruction> instructions, double maxPressureDiff = 5000.0)
+    {
+      return new CodeMatcher(instructions)
+        .MatchForward(false,
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(AtmosphereHelper), "TakeNormalisedGasPressureScaled", new Type[] { typeof(Atmosphere), typeof(PressurekPa), typeof(PressurekPa), typeof(MoleQuantity).MakeByRefType(), typeof(float) }))
+        )
+        .ThrowIfNotMatch("TakeNormalisedGasPressureScaledCapped: Pattern not found")
+        .InsertAndAdvance(
+          new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff)
+        )
+        .SetInstructionAndAdvance(new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.TakeNormalisedGasPressureScaledCapped))))
+        .InstructionEnumeration();
+    }
+  }
 
   [HarmonyPatch(typeof(PressureRegulator))]
   public static class PressureRegulatorPatch
@@ -148,39 +197,7 @@ namespace RealisticSaferAtmospherics
     [HarmonyTranspiler]
     static IEnumerable<CodeInstruction> AdvancedFurnaceTranspiler(IEnumerable<CodeInstruction> instructions)
     {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
-    }
-  }
-  [HarmonyPatch(typeof(DeviceAtmospherics))]
-  public static class DeviceAtmosphericsPatch
-  {
-    [HarmonyPatch("MoveVolume")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> DeviceAtmosphericsTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions);
-    }
-  }
-
-  [HarmonyPatch(typeof(IndustrialBurner))]
-  public static class IndustrialBurnerPatch
-  {
-    [HarmonyPatch("HandleGasInput")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> IndustrialBurnerTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions);
-    }
-  }
-
-  [HarmonyPatch(typeof(LiquidRocketEngine))]
-  public static class LiquidRocketEnginePatch
-  {
-    [HarmonyPatch("MovePropellant")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> LiquidRocketEngineTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
+      return TranspilerHelpers.TranspileMoveVolumeCapped(instructions, 40000.0);
     }
   }
 
@@ -197,8 +214,8 @@ namespace RealisticSaferAtmospherics
       const double turboVolumePumpMaxDiff = 40000.0; // 40 MPa cap for turbo volume pumps
       const double turboNormalDiff = turboVolumePumpMaxDiff - normalVolumePumpMaxDiff;
 
-      var moveVolumeCapped = AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.MoveVolumeCapped));
-      var turboMinSoundPitch = AccessTools.Property(typeof(TurboVolumePump), nameof(TurboVolumePump.MinOperatingSoundPitch))?.GetGetMethod();
+      var moveVolumeCapped = AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.MoveVolumeCapped));
+      var turboMinSoundPitch = AccessTools.Property(typeof(TurboVolumePump), nameof(TurboVolumePump.MinOperatingSoundPitch)).GetGetMethod();
       if (moveVolumeCapped == null || turboMinSoundPitch == null)
       {
         RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MinOperatingSoundPitch found: {turboMinSoundPitch != null}");
@@ -217,7 +234,7 @@ namespace RealisticSaferAtmospherics
         {
           // Check MinOperatingSoundPitch to determine if this is a turbo volume pump or not
           yield return new CodeInstruction(OpCodes.Ldarg_0);
-          yield return new CodeInstruction(OpCodes.Callvirt, AccessTools.Property(typeof(VolumePump), "MinOperatingSoundPitch")?.GetGetMethod());
+          yield return new CodeInstruction(OpCodes.Callvirt, AccessTools.Property(typeof(VolumePump), "MinOperatingSoundPitch").GetGetMethod());
           yield return new CodeInstruction(OpCodes.Ldc_R4, turboMinOperatingSoundPitch);
           yield return new CodeInstruction(OpCodes.Ceq); //Trick to avoid branching, result is 1 if turbo pump, 0 if normal pump
           yield return new CodeInstruction(OpCodes.Conv_R8);
@@ -239,28 +256,6 @@ namespace RealisticSaferAtmospherics
       {
         RealisticSaferAtmosphericsPlugin.Instance.LogError("VolumePumpTranspiler: Injection failed, pattern not found.");
       }
-    }
-  }
-
-  [HarmonyPatch(typeof(PressureFedLiquidEngine))]
-  public static class PressureFedLiquidEnginePatch
-  {
-    [HarmonyPatch("MovePropellant")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> PressureFedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
-    }
-  }
-
-  [HarmonyPatch(typeof(PumpedLiquidEngine))]
-  public static class PumpedLiquidEnginePatch
-  {
-    [HarmonyPatch("MovePropellant")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> PumpedLiquidEngineTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
-      return PumpHelper.TranspileMoveVolumeCapped(instructions, 40000.0);
     }
   }
 
@@ -295,7 +290,7 @@ namespace RealisticSaferAtmospherics
               new CodeInstruction(OpCodes.Ldarg_0),
               new CodeInstruction(OpCodes.Call, AccessTools.PropertyGetter(typeof(Mixer), "Ratio1")),
               new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff),
-              new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(PumpHelper), nameof(PumpHelper.getMixerFlowRateModifier))),
+              new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(FlowMath), nameof(FlowMath.getMixerFlowRateModifier))),
               new CodeInstruction(OpCodes.Mul),
               new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
           );
@@ -304,5 +299,76 @@ namespace RealisticSaferAtmospherics
         .InstructionEnumeration();
     }
   }
+
+  [HarmonyPatch(typeof(AirConditioner))]
+  public static class AirConditionerPatch
+  {
+    [HarmonyPatch("OnAtmosphericTick")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> AirConditionerTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      const double maxPressureDiff = 5000.0; // 5 MPa cap for air conditioners
+      return new CodeMatcher(instructions)
+        .MatchForward(false,
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(IdealGas), nameof(IdealGas.Quantity), new Type[] { typeof(PressurekPa), typeof(VolumeLitres), typeof(TemperatureKelvin) }))
+        )
+        .ThrowIfNotMatch("AirConditionerTranspiler: Pattern not found")
+        .Advance(1)
+        .InsertAndAdvance(
+          new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
+          new CodeInstruction(OpCodes.Ldarg_0),
+          new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "InputNetwork")),
+          new CodeInstruction(OpCodes.Ldarg_0),
+          new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "OutputNetwork")),
+          new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff),
+          new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(FlowMath), nameof(FlowMath.getFlowRateModifier), new Type[] { typeof(PipeNetwork), typeof(PipeNetwork), typeof(double) })),
+          new CodeInstruction(OpCodes.Mul),
+          new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
+      )
+      .InstructionEnumeration();
+    }
+  }
+
+  [HarmonyPatch(typeof(FiltrationMachineBase))]
+  public static class FiltrationUnitPatch
+  {
+    [HarmonyPatch("OnAtmosphericTick")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> FiltrationUnitTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      const double maxPressureDiff = 5000.0;
+      return TranspilerHelpers.TranspileTakeNormalisedGasPressureScaledCapped(instructions, maxPressureDiff);
+    }
+  }
+
+  [HarmonyPatch(typeof(CombustionCentrifuge))]
+  public static class CombustionCentrifugePatch
+  {
+    [HarmonyPatch("HandleGasOutput")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> CombustionCentrifugeTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      const double maxPressureDiff = 5000.0; // 5 MPa cap for combustion centrifug
+      return new CodeMatcher(instructions)
+        .MatchForward(false,
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(RocketMath), nameof(RocketMath.Min), new Type[] { typeof(MoleQuantity), typeof(MoleQuantity) }))
+        )
+        .ThrowIfNotMatch("CombustionCentrifugeTranspiler: Pattern not found")
+        .Advance(1)
+        .InsertAndAdvance(
+          new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
+          new CodeInstruction(OpCodes.Ldarg_0),
+          new CodeInstruction(OpCodes.Callvirt, AccessTools.PropertyGetter(typeof(Thing), "InternalAtmosphere")),
+          new CodeInstruction(OpCodes.Ldarg_0),
+          new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(DeviceInputOutput), "OutputNetwork")),
+          new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff),
+          new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(FlowMath), nameof(FlowMath.getFlowRateModifier), new Type[] { typeof(Atmosphere), typeof(PipeNetwork), typeof(double) })),
+          new CodeInstruction(OpCodes.Mul),
+          new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
+      )
+      .InstructionEnumeration();
+    }
+  }
+
 }
 
