@@ -1,15 +1,44 @@
 # More Realistic (And Safer) Atmospherics
 
-## Pressure Differential Caps
+## Project Objectives
 
-The following machines should not be capable of pumping arbitrarily low pressures to arbitrarily high pressures.  If the pressure differential is higher than the maximum, then they rapidly slow their output with exponential fallout toward the differential maximum.
+Make atmospherics system more intuitive and fun to engage with by making the machines more closely follow realistic behavior.  This has the effect of making machines tend to be easier to understand and safer to use, as well as introduces interesting and compelling engineering problems to solve.
 
-- Volume Pump
-- Turbo Volume Pump
-- Filtration Unit
-- Air Conditioner
-- Active Vent
+## Changes
 
-## Passive Pressure Regulators
+### Passive Pressure Regulators
 
-Pressure regulators & back pressure regulators in real pneumatics are passive mechanic devices.  Allow them to always function regardless of power state.  Power just enables data functionality.
+In reality, pressure regulators are mechanical devices that do not require power.
+
+This mod changes pressure & backpressure regulators to always be considered "powered".  You can still plug them into a data network to control them, in which case they will consume 5 watts.
+
+Performance-wise, regulators now function a lot more like one-way valves. Their throughput is much higher than before, but they've lost the capability to generate a higher pressure on the output than the input.  If you want to generate a pressure differential, you will need a pump.
+
+### Pressure Differential Caps
+
+In reality, it takes more and more energy to pump gasses from a lower to higher pressure.  The higher the differential, the more torque your pump needs in order to continue operating at full speed.
+
+By default, every device in Stationeers is capable of generating effectively infinite pressure differentials with no cost to energy or efficiency.  This introduces serious gameplay and design problems, such as the fact that an uncontrolled volume pump or gas mixer, given enough input gas, will inevitably burst its output network.
+
+This mod changes several atmospherics devices so that as they approach their pressure differential maximum, their throughput falls off, with a hard cap of 0 at their maximum differential.
+
+As an example, a volume pump now has a maximum differential of 10 MPa.  If it has 5 MPa on the input network, then the maximum it is capable of pumping to on the output is 15 MPa.
+
+#### Devices Changed
+
+- Volume Pump - 10 MPa
+- Turbo Volume Pump - 40 MPa
+- Gas Mixer - 5 MPa
+- Advanced Furnace - 40 MPa
+- Air Conditioner - 5 MPa
+- Filtration Unit - 5 MPa
+
+#### Not Yet Implemented
+- Active/Powered Vent - 5 MPa
+- CombustionCentrifuge - 5 MPa
+
+#### Not Altered
+
+- Electrolyzer - Already uses MoveToEqualize logic
+- H2Combustor - Already uses MoveToEqualize logic
+- Nitrolyzer - Has a hard lock to prevent output from exceeding internal pressure
