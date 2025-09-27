@@ -124,7 +124,7 @@ namespace RealisticSaferAtmospherics
       var moveLiquidVolumeCapped = AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.MoveLiquidVolumeCapped));
       if (moveVolumeCapped == null || moveLiquidVolumeCapped == null)
       {
-        RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MoveLiquidVolumeCapped found: {moveLiquidVolumeCapped != null}");
+        Logger.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MoveLiquidVolumeCapped found: {moveLiquidVolumeCapped != null}");
       }
       foreach (var instruction in instructions)
       {
@@ -252,7 +252,7 @@ namespace RealisticSaferAtmospherics
       var turboMinSoundPitch = AccessTools.Property(typeof(TurboVolumePump), nameof(TurboVolumePump.MinOperatingSoundPitch)).GetGetMethod();
       if (moveVolumeCapped == null || turboMinSoundPitch == null)
       {
-        RealisticSaferAtmosphericsPlugin.Instance.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MinOperatingSoundPitch found: {turboMinSoundPitch != null}");
+        Logger.LogError($"VolumePumpTranspiler: Unable to resolve methods. MoveVolumeCapped found: {moveVolumeCapped != null} MinOperatingSoundPitch found: {turboMinSoundPitch != null}");
         foreach (var instruction in instructions)
         {
           yield return instruction; // just pass through original code if we can't find the methods
@@ -288,7 +288,7 @@ namespace RealisticSaferAtmospherics
       }
       if (!injected)
       {
-        RealisticSaferAtmosphericsPlugin.Instance.LogError("VolumePumpTranspiler: Injection failed, pattern not found.");
+        Logger.LogError("VolumePumpTranspiler: Injection failed, pattern not found.");
       }
     }
   }
