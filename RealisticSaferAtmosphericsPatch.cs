@@ -19,12 +19,17 @@ namespace RealisticSaferAtmospherics
       return Math.Max(quadraticFalloff, 0.0);
     }
 
+    public static double getFlowRateModifier(Atmosphere inputAtmos, Atmosphere outputAtmos, double maxDifferential)
+    {
+      return getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxDifferential);
+    }
+
     // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure difference
     public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDifference)
     {
       double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
       // Added modifier to num based on pressure difference
-      num *= getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference);
+      num *= getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDifference);
       if (num <= 0.0)
       {
         return;
@@ -35,7 +40,7 @@ namespace RealisticSaferAtmospherics
 
     public static void MoveLiquidVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, double maxPressureDifference)
     {
-      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos.PressureGassesAndLiquids.ToDouble(), outputAtmos.PressureGassesAndLiquids.ToDouble(), maxPressureDifference));
+      volume *= new VolumeLitres(getFlowRateModifier(inputAtmos, outputAtmos, maxPressureDifference));
       outputAtmos.Add(AtmosphereHelper.RemoveLiquidVolume(inputAtmos, volume));
     }
 
