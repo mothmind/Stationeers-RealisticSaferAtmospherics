@@ -158,6 +158,35 @@ namespace RealisticSaferAtmospherics
         .SetInstructionAndAdvance(new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(TranspilerHelpers), nameof(TranspilerHelpers.TakeNormalisedGasPressureScaledCapped))))
         .InstructionEnumeration();
     }
+
+    public static IEnumerable<CodeInstruction> TranspilePoweredVent(IEnumerable<CodeInstruction> instructions, bool succMode, double maxPressureDiff, bool staticMethod = false)
+    {
+      // First arg is World, second is Pipe.
+      //   First op is Input, second is Output, so succMode is low to high, blowMode is high to low
+      OpCode firstOp = succMode ? OpCodes.Ldarg_1 : OpCodes.Ldarg_2;
+      OpCode secondOp = succMode ? OpCodes.Ldarg_2 : OpCodes.Ldarg_1;
+      if (staticMethod)
+      { // Static methods have args shifted down by 1
+        firstOp = succMode ? OpCodes.Ldarg_0 : OpCodes.Ldarg_1;
+        secondOp = succMode ? OpCodes.Ldarg_1 : OpCodes.Ldarg_0;
+      }
+      return new CodeMatcher(instructions)
+          .MatchForward(false,
+            new CodeMatch(OpCodes.Callvirt, AccessTools.Method(typeof(Atmosphere), "Remove", new Type[] { typeof(MoleQuantity), typeof(AtmosphereHelper.MatterState) }))
+          )
+          .ThrowIfNotMatch("PoweredVentBlowTranspiler: Pattern not found")
+          .Advance(-1)
+          .InsertAndAdvance(
+            new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
+            new CodeInstruction(firstOp), // ldarg1 is World, ldarg2 is Pipe
+            new CodeInstruction(secondOp), // First arg is input, second is output
+            new CodeInstruction(OpCodes.Ldc_R8, maxPressureDiff),
+            new CodeInstruction(OpCodes.Call, AccessTools.Method(typeof(FlowMath), nameof(FlowMath.getFlowRateModifier), new Type[] { typeof(Atmosphere), typeof(Atmosphere), typeof(double) })),
+            new CodeInstruction(OpCodes.Mul),
+            new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
+          )
+          .InstructionEnumeration();
+    }
   }
 
   [HarmonyPatch(typeof(PressureRegulator))]
@@ -191,17 +220,6 @@ namespace RealisticSaferAtmospherics
           instruction.operand = 1.0; // Makes regulators equalize pressure roughly at the speed of valves
         }
       }
-      return instructions;
-    }
-  }
-
-  [HarmonyPatch(typeof(ActiveVent))]
-  public static class ActiveVentPatch
-  {
-    [HarmonyPatch("PumpGasToPipe")]
-    [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> ActiveVentTranspiler(IEnumerable<CodeInstruction> instructions)
-    {
       return instructions;
     }
   }
@@ -383,6 +401,64 @@ namespace RealisticSaferAtmospherics
           new CodeInstruction(OpCodes.Newobj, AccessTools.Constructor(typeof(MoleQuantity), new Type[] { typeof(double) }))
       )
       .InstructionEnumeration();
+    }
+  }
+
+  [HarmonyPatch(typeof(ActiveVent))]
+  public static class ActiveVentPatch
+  {
+    const double maxPressureDiff = 5000.0; // 5 MPa cap for active vents
+    [HarmonyPatch("PumpGasToWorld")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> ActiveVentBlowTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, false, maxPressureDiff);
+    }
+
+    [HarmonyPatch("PumpGasToPipe")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> ActiveVentSuccTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, true, maxPressureDiff);
+    }
+  }
+
+  [HarmonyPatch(typeof(PoweredVent))]
+  public static class PoweredVentPatch
+  {
+    const double maxPressureDiff = 10000.0; // 10 MPa cap for powered vents
+    [HarmonyPatch("PumpGasToWorld")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> PoweredVentBlowTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, false, maxPressureDiff);
+    }
+
+    [HarmonyPatch("PumpGasToPipe")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> PoweredVentSuccTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, true, maxPressureDiff);
+    }
+  }
+
+
+  [HarmonyPatch(typeof(MultiGridAtmospherics))]
+  public static class MultiGridAtmosphericsPatch
+  {
+    const double maxPressureDiff = 10000.0; // 10 MPa cap for powered vents
+    [HarmonyPatch("PumpGasToWorld")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> MultiPoweredVentBlowTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, false, maxPressureDiff, true);
+    }
+
+    [HarmonyPatch("PumpGasToPipe")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> MultiPoweredVentSuccTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return TranspilerHelpers.TranspilePoweredVent(instructions, true, maxPressureDiff, true);
     }
   }
 

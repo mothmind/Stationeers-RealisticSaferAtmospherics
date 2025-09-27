@@ -32,9 +32,8 @@ As an example, a volume pump now has a maximum differential of 10 MPa.  If it ha
 - Advanced Furnace - 40 MPa
 - Air Conditioner - 5 MPa
 - Filtration Unit - 5 MPa
-
-#### Not Yet Implemented
-- Active/Powered Vent - 5 MPa
+- Active - 5 MPa
+- Powered Vent - 10 MPa
 - CombustionCentrifuge - 5 MPa
 
 #### Not Altered
