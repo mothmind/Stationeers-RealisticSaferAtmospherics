@@ -8,7 +8,7 @@ Make atmospherics system more intuitive and fun to engage with by making the mac
 
 ### Passive Pressure Regulators
 
-In reality, pressure regulators are mechanical devices that do not require power.
+In real life, pressure regulators are mechanical devices that do not require power.
 
 This mod changes pressure & backpressure regulators to always be considered "powered".  You can still plug them into a data network to control them, in which case they will consume 5 watts.
 
@@ -16,7 +16,7 @@ Performance-wise, regulators now function a lot more like one-way valves. Their 
 
 ### Pressure Differential Caps
 
-In reality, it takes more and more energy to pump gasses from a lower to higher pressure.  The higher the differential, the more torque your pump needs in order to continue operating at full speed.
+In real life, it takes more and more energy to pump gasses from a lower to higher pressure.  The higher the differential, the more torque your pump needs in order to continue operating at full speed.
 
 By default, every device in Stationeers is capable of generating effectively infinite pressure differentials with no cost to energy or efficiency.  This introduces serious gameplay and design problems, such as the fact that an uncontrolled volume pump or gas mixer, given enough input gas, will inevitably burst its output network.
 
