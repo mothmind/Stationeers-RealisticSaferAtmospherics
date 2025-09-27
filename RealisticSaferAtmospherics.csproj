@@ -4,7 +4,11 @@
     <TargetFramework>net48</TargetFramework>
     <RootNamespace>RealisticSaferAtmospherics</RootNamespace>
     <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Stationeers</GameDir>
-    <RestoreSources>https://api.nuget.org/v3/index.json</RestoreSources>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,6 +33,13 @@
     <Reference Include="0Harmony">
       <HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath>
     </Reference>
+    <Reference Include="System.Core">
+      <HintPath>$(GameDir)\rocketstation_Data\Managed\System.Core.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework.TrimEnd(0123456789))' == 'net'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
   </ItemGroup>
 
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
