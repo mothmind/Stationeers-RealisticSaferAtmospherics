@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace RealisticSaferAtmospherics
 {
-  [BepInPlugin("net.Moth.stationeers.RealisticSaferAtmospherics", "Realistic (Safer) Atmospherics", "0.0.1")]
+  [BepInPlugin("net.Moth.stationeers.RealisticSaferAtmospherics", "Realistic (Safer) Atmospherics", "1.1")]
   public class RealisticSaferAtmosphericsPlugin : BaseUnityPlugin
   {
     public static RealisticSaferAtmosphericsPlugin Instance;
