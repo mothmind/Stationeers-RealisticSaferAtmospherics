@@ -10,7 +10,6 @@ using Objects.Pipes;
 using Assets.Scripts.Networks;
 using Assets.Scripts.Objects.Electrical;
 using Assets.Scripts.Objects;
-
 namespace RealisticSaferAtmospherics
 {
   public static class Logger
@@ -192,17 +191,33 @@ namespace RealisticSaferAtmospherics
   [HarmonyPatch(typeof(PressureRegulator))]
   public static class PressureRegulatorPatch
   {
-    [HarmonyPatch("OnAtmosphericTick")]
+    [HarmonyPatch("Awake")]
     [HarmonyPrefix]
-    static private void PressureRegulatorAlwaysPowered(PressureRegulator __instance)
+    static private void PressureRegulatorAwake(PressureRegulator __instance)
     {
-      __instance.PoweredValue = 1; // Always powered
       __instance.UsedPower = 5.0f; // Plugging in allows data connection at minor cost of power
       var pressurePerTickProperty = AccessTools.Field(typeof(PressureRegulator), "pressurePerTick");
       if (pressurePerTickProperty != null)
       {
         pressurePerTickProperty.SetValue(__instance, 0.0f); // Pressure Regulator only goes high to low
       }
+    }
+
+    [HarmonyPatch("OnAtmosphericTick")]
+    [HarmonyTranspiler]
+    static IEnumerable<CodeInstruction> PressureRegulatorTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+      return new CodeMatcher(instructions)
+        .MatchForward(false,
+          new CodeMatch(OpCodes.Ldarg_0),
+          new CodeMatch(OpCodes.Callvirt, AccessTools.PropertyGetter(typeof(Thing), "Powered")),
+          new CodeMatch(OpCodes.Brfalse)
+        )
+        .ThrowIfNotMatch("PressureRegulatorTranspiler: Pattern not found")
+        .SetAndAdvance(OpCodes.Nop, null)
+        .SetAndAdvance(OpCodes.Nop, null)
+        .SetAndAdvance(OpCodes.Nop, null)
+        .InstructionEnumeration();
     }
   }
 
