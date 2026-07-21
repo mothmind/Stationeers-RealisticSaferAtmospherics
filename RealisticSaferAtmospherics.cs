@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace RealisticSaferAtmospherics
 {
-  [BepInPlugin("net.Moth.stationeers.RealisticSaferAtmospherics", "Realistic (Safer) Atmospherics", "1.1")]
+  [BepInPlugin("net.Moth.stationeers.RealisticSaferAtmospherics", "Realistic (Safer) Atmospherics", "1.2")]
   public class RealisticSaferAtmosphericsPlugin : BaseUnityPlugin
   {
     public static RealisticSaferAtmosphericsPlugin Instance;
@@ -29,18 +29,18 @@ namespace RealisticSaferAtmospherics
     void Awake()
     {
       RealisticSaferAtmosphericsPlugin.Instance = this;
-      Log("Mothmod Initializing");
+      Log("RealisticSaferAtmospherics Initializing");
 
       try
       {
         // Harmony.DEBUG = true;
         var harmony = new Harmony("net.Moth.stationeers.RealisticSaferAtmospherics");
         harmony.PatchAll();
-        Log("Patch succeeded");
+        Log("RealisticSaferAtmospherics Patch succeeded");
       }
       catch (Exception e)
       {
-        Log("Patch Failed");
+        Log("RealisticSaferAtmospherics Patch Failed");
         Log(e.ToString());
       }
     }

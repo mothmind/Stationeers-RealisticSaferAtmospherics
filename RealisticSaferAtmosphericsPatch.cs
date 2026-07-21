@@ -84,7 +84,7 @@ namespace RealisticSaferAtmospherics
 
   public static class TranspilerHelpers
   {
-    public static GasMixture TakeNormalisedGasPressureScaledCapped(Atmosphere inputAtmosphere, PressurekPa basePressurePerTick, PressurekPa inputPressureDelta, out MoleQuantity transferMoles, float denominator = 3f, double maxPressureDiff = 5000.0)
+    public static GasMixture TakeNormalisedGasPressureScaledCapped(Atmosphere inputAtmosphere, PressurekPa basePressurePerTick, PressurekPa inputPressureDelta, out MoleQuantity transferMoles, AtmosphereHelper.MatterState matterState = AtmosphereHelper.MatterState.All, float denominator = 3f, double maxPressureDiff = 5000.0)
     {
       double inputPressure = inputAtmosphere.PressureGassesAndLiquids.ToDouble();
       double outputPressure = inputPressure - inputPressureDelta.ToDouble();
@@ -94,11 +94,11 @@ namespace RealisticSaferAtmospherics
       PressurekPa pressure = RocketMath.MapToScale(PressurekPa.Zero, Chemistry.Limits.MAXPressureGasPipe, basePressurePerTick, outMax, inputPressureDelta);
       transferMoles = IdealGas.Quantity(pressure, Chemistry.PipeVolume, inputAtmosphere.Temperature);
       transferMoles *= modifier;
-      return inputAtmosphere.Remove(transferMoles, AtmosphereHelper.MatterState.All);
+      return inputAtmosphere.Remove(transferMoles, matterState);
     }
 
     // Copied from AtmosphereHelper, flow rate tapers off as we approach max pressure diff
-    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, double maxPressureDiff)
+    public static void MoveVolumeCapped(Atmosphere inputAtmos, Atmosphere outputAtmos, VolumeLitres volume, AtmosphereHelper.MatterState matterStateToMove, MoleQuantity minMolesToMove, double maxPressureDiff)
     {
       double num = RocketMath.Clamp(volume / inputAtmos.GetVolume(matterStateToMove), VolumeLitres.Zero, inputAtmos.GetVolume(matterStateToMove)).ToDouble();
       // Added modifier to num based on pressure diff
@@ -148,7 +148,7 @@ namespace RealisticSaferAtmospherics
     {
       return new CodeMatcher(instructions)
         .MatchForward(false,
-          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(AtmosphereHelper), "TakeNormalisedGasPressureScaled", new Type[] { typeof(Atmosphere), typeof(PressurekPa), typeof(PressurekPa), typeof(MoleQuantity).MakeByRefType(), typeof(float) }))
+          new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(AtmosphereHelper), "TakeNormalisedGasPressureScaled", new Type[] { typeof(Atmosphere), typeof(PressurekPa), typeof(PressurekPa), typeof(MoleQuantity).MakeByRefType(), typeof(AtmosphereHelper.MatterState), typeof(float) }))
         )
         .ThrowIfNotMatch("TakeNormalisedGasPressureScaledCapped: Pattern not found")
         .InsertAndAdvance(
@@ -390,19 +390,19 @@ namespace RealisticSaferAtmospherics
     }
   }
 
-  [HarmonyPatch(typeof(CombustionCentrifuge))]
-  public static class CombustionCentrifugePatch
+  [HarmonyPatch(typeof(InternalCombustion))]
+  public static class InternalCombustionPatch
   {
     [HarmonyPatch("HandleGasOutput")]
     [HarmonyTranspiler]
-    static IEnumerable<CodeInstruction> CombustionCentrifugeTranspiler(IEnumerable<CodeInstruction> instructions)
+    static IEnumerable<CodeInstruction> InternalCombustionTranspiler(IEnumerable<CodeInstruction> instructions)
     {
       const double maxPressureDiff = 5000.0; // 5 MPa cap for combustion centrifug
       return new CodeMatcher(instructions)
         .MatchForward(false,
           new CodeMatch(OpCodes.Call, AccessTools.Method(typeof(RocketMath), nameof(RocketMath.Min), new Type[] { typeof(MoleQuantity), typeof(MoleQuantity) }))
         )
-        .ThrowIfNotMatch("CombustionCentrifugeTranspiler: Pattern not found")
+        .ThrowIfNotMatch("InternalCombustionTranspiler: Pattern not found")
         .Advance(1)
         .InsertAndAdvance(
           new CodeInstruction(OpCodes.Ldfld, AccessTools.Field(typeof(MoleQuantity), "_value")),
