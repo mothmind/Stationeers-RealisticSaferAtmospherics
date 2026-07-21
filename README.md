@@ -22,7 +22,7 @@ By default, every device in Stationeers is capable of generating effectively inf
 
 This mod changes several atmospherics devices so that as they approach their pressure differential maximum, their throughput falls off, with a hard cap of 0 at their maximum differential.
 
-As an example, a volume pump now has a maximum differential of 10 MPa.  If it has 5 MPa on the input network, then the maximum it is capable of pumping to on the output is 10 MPa.
+As an example, a volume pump now has a maximum differential of 10 MPa.  If it has 5 MPa on the input network, then the maximum it is capable of pumping to on the output is 10 MPa.  It will still consume power normally.
 
 #### Devices Changed
 
